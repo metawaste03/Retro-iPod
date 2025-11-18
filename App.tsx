@@ -130,13 +130,6 @@ const getInitialPlaylists = (): Playlist[] => {
 };
 const initialPlaylists = getInitialPlaylists();
 
-const PIPED_INSTANCES = [
-  'https://pipedapi.tokhmi.xyz',
-  'https://piped-api.lunar.computer',
-  'https://pipedapi.kavin.rocks', // Original as a fallback
-];
-
-
 const App: React.FC = () => {
   const [playlists, setPlaylists] = useState<Playlist[]>(initialPlaylists);
   const [view, setView] = useState<View>(initialPlaylists.length > 0 && initialPlaylists.some(p => p.songs.length > 0) ? 'main-menu' : 'add-song');
@@ -321,39 +314,29 @@ const App: React.FC = () => {
     const setupAudioPlayer = async () => {
       if (!currentSong || !audioRef.current) return;
       
-      let streamUrl: string | null = null;
+      try {
+        const response = await fetch(`/api/get-audio-stream?videoId=${currentSong.id}`);
+        
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.error || `Server responded with status ${response.status}`);
+        }
 
-      for (const instance of PIPED_INSTANCES) {
-          try {
-              const response = await fetch(`${instance}/streams/${currentSong.id}`);
-              if (!response.ok) {
-                  console.warn(`Piped instance ${instance} failed with status ${response.status}. Trying next.`);
-                  continue;
-              }
-              const data = await response.json();
-              const audioStream = data.audioStreams
-                  .filter((s: any) => s.mimeType === "audio/mp4")
-                  .sort((a: any, b: any) => b.bitrate - a.bitrate)[0];
-
-              if (audioStream && audioStream.url) {
-                  streamUrl = audioStream.url;
-                  console.log(`Successfully fetched audio stream from ${instance}`);
-                  break; // Success, exit loop
-              }
-          } catch (error) {
-              console.warn(`Error fetching from Piped instance ${instance}:`, error);
-          }
-      }
-
-      if (streamUrl && audioRef.current) {
-          audioRef.current.src = streamUrl;
-          audioRef.current.play().catch(e => {
-              console.error("Audio play failed:", e);
-          });
-      } else {
-          console.error("Could not find a working audio stream from any Piped instance.");
-          alert("Could not play audio for this song. It may be restricted or the streaming services might be temporarily unavailable.");
-          handleSongEnd();
+        const data = await response.json();
+        
+        if (data.audioUrl && audioRef.current) {
+            audioRef.current.src = data.audioUrl;
+            audioRef.current.play().catch(e => {
+                console.error("Audio play failed:", e);
+                alert("Could not play audio. The browser might have blocked autoplay.");
+            });
+        } else {
+            throw new Error("No audio URL found in the API response.");
+        }
+      } catch (error) {
+          console.error("Failed to get audio stream:", error);
+          alert("Could not play audio for this song. It may be restricted or unavailable.");
+          handleSongEnd(); // Move to next or stop
       }
     };
 

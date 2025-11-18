@@ -42,6 +42,14 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
+  const requestUrl = new URL(event.request.url);
+
+  // Do not cache API requests
+  if (requestUrl.pathname.startsWith('/api/')) {
+    event.respondWith(fetch(event.request));
+    return;
+  }
+
   event.respondWith(
     caches.match(event.request)
       .then((response) => {
@@ -54,13 +62,7 @@ self.addEventListener('fetch', (event) => {
 
         return fetch(fetchRequest).then(
           (response) => {
-            const requestUrl = new URL(event.request.url);
-            const excludedHosts = [
-                'googlevideo.com', 
-                'pipedapi.kavin.rocks', 
-                'pipedapi.tokhmi.xyz', 
-                'piped-api.lunar.computer'
-            ];
+            const excludedHosts = ['googlevideo.com'];
 
             // Don't cache invalid responses, or video/audio streams
             if (!response || response.status !== 200 || (response.type !== 'basic' && response.type !== 'cors') || excludedHosts.some(host => requestUrl.hostname.includes(host))) {
