@@ -3,6 +3,9 @@ import type { View, Playlist, Song, PlaybackMode, RepeatMode } from './types';
 import { getYouTubeId } from './services/youtubeService';
 import { PlayIcon, PauseIcon, NextTrackIcon, PrevTrackIcon, ChevronRightIcon, RepeatIcon, RepeatOneIcon, MoonIcon, SunIcon } from './components/icons';
 
+// FIX: Removed conflicting global declarations for MediaMetadataInit and MediaMetadata.
+// These types are provided by default in modern TypeScript DOM libraries, and the
+// manual declarations were causing duplicate identifier and type mismatch errors.
 // --- Type definition for YouTube Player API ---
 declare global {
   interface Window {
@@ -143,6 +146,7 @@ const App: React.FC = () => {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [urlInput, setUrlInput] = useState('');
   const [tempSong, setTempSong] = useState<Song | null>(null);
+  const [tempSongTitle, setTempSongTitle] = useState('');
   const [newPlaylistName, setNewPlaylistName] = useState('');
   const [draggedItemIndex, setDraggedItemIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
@@ -320,7 +324,7 @@ const App: React.FC = () => {
       case 'main-menu': navigate(menuItems, 'next'); break;
       case 'playlists': navigate(playlistMenuItems, 'next'); break;
       case 'playlist-view': navigate(playlistViewItems, 'next'); break;
-      case 'select-playlist-for-song': navigate([...playlists, {id: 'new', name: 'Create New Playlist', songs:[]}], 'next'); break;
+      case 'select-playlist-for-song': navigate([...playlists, {id: 'new', name: 'Create New Playlist', songs:[]}],'next'); break;
       case 'song-menu': navigate(['Play'], 'next'); break;
       case 'delete-song-confirm':
       case 'delete-playlist-confirm':
@@ -337,7 +341,7 @@ const App: React.FC = () => {
       case 'main-menu': navigate(menuItems, 'prev'); break;
       case 'playlists': navigate(playlistMenuItems, 'prev'); break;
       case 'playlist-view': navigate(playlistViewItems, 'prev'); break;
-      case 'select-playlist-for-song': navigate([...playlists, {id: 'new', name: 'Create New Playlist', songs:[]}], 'prev'); break;
+      case 'select-playlist-for-song': navigate([...playlists, {id: 'new', name: 'Create New Playlist', songs:[]}],'prev'); break;
       case 'song-menu': navigate(['Play'], 'prev'); break;
       case 'delete-song-confirm':
       case 'delete-playlist-confirm':
@@ -356,6 +360,7 @@ const App: React.FC = () => {
       case 'playlist-view': setView('playlists'); setActivePlaylistId(null); break;
       case 'add-song': if (playlists.length > 0) setView('main-menu'); setUrlInput(''); break;
       case 'now-playing': setView(activePlaylistId ? 'playlist-view' : 'main-menu'); break;
+      case 'edit-song-title': setView('add-song'); setTempSong(null); setTempSongTitle(''); break;
       case 'select-playlist-for-song': setView('add-song'); setTempSong(null); break;
       case 'create-playlist-input':
         setView(tempSong ? 'select-playlist-for-song' : 'playlists');
@@ -401,6 +406,7 @@ const App: React.FC = () => {
       case 'delete-playlist-confirm': handleConfirmation(selectedIndex); break;
       case 'shuffle-confirm': handleConfirmation(selectedIndex); break;
       case 'add-song': handleAddSongUrl(); break;
+      case 'edit-song-title': handleConfirmSongTitle(); break;
       case 'select-playlist-for-song': handleSelectPlaylistForSongSelection(selectedIndex); break;
       case 'create-playlist-input': handleCreatePlaylist(); break;
       case 'now-playing': handleNowPlayingSelection(selectedIndex); break;
@@ -523,9 +529,10 @@ const App: React.FC = () => {
     const videoId = getYouTubeId(urlInput);
     if (videoId) {
       triggerVibration(100);
-      const newSong: Song = { id: videoId, title: `Song: ${videoId}` };
+      const newSong: Song = { id: videoId, title: '' }; // Title will be set in the next step
       setTempSong(newSong);
-      setView('select-playlist-for-song');
+      setTempSongTitle(`Song: ${videoId}`); // Pre-populate with a default
+      setView('edit-song-title');
       setUrlInput('');
       setSelectedIndex(0);
     } else {
@@ -533,11 +540,21 @@ const App: React.FC = () => {
       alert('Invalid YouTube URL');
     }
   };
+
+  const handleConfirmSongTitle = () => {
+    if (tempSong && tempSongTitle.trim()) {
+      const updatedSong: Song = { ...tempSong, title: tempSongTitle.trim() };
+      setTempSong(updatedSong);
+      setView('select-playlist-for-song');
+      setSelectedIndex(0);
+    }
+  };
   
   const addSongToPlaylist = (playlistId: string, song: Song) => {
     triggerVibration(100);
     setPlaylists(prev => prev.map(p => p.id === playlistId ? { ...p, songs: [...p.songs, song] } : p));
     setTempSong(null);
+    setTempSongTitle('');
     setActivePlaylistId(playlistId);
     setView('playlist-view');
     setSelectedIndex(playlists.find(p => p.id === playlistId)?.songs.length || 0);
@@ -559,6 +576,7 @@ const App: React.FC = () => {
         
         setNewPlaylistName('');
         setTempSong(null);
+        setTempSongTitle('');
 
         if (tempSong) {
             setActivePlaylistId(newPlaylist.id);
@@ -650,11 +668,77 @@ const App: React.FC = () => {
     setDragOverIndex(null);
   };
 
+  // --- Service Worker and Media Session Integration ---
+
+  useEffect(() => {
+    const handleSWMessage = (event: MessageEvent) => {
+        if (event.data && event.data.type === 'MEDIA_CONTROL') {
+            switch (event.data.action) {
+                case 'play':
+                case 'pause':
+                    handlePlayPause();
+                    break;
+                case 'nexttrack':
+                    handleNextTrack();
+                    break;
+                case 'previoustrack':
+                    handlePrevTrack();
+                    break;
+            }
+        }
+    };
+    navigator.serviceWorker.addEventListener('message', handleSWMessage);
+    return () => {
+        navigator.serviceWorker.removeEventListener('message', handleSWMessage);
+    };
+  }, [handlePlayPause, handleNextTrack, handlePrevTrack]);
+
+  const activePlaylistForMetadata = playlists.find(p => p.id === nowPlaying?.playlistId);
+  useEffect(() => {
+      if ('mediaSession' in navigator) {
+          if (currentSong && activePlaylistForMetadata) {
+              navigator.mediaSession.metadata = new MediaMetadata({
+                  title: currentSong.title,
+                  artist: activePlaylistForMetadata.name,
+                  album: 'Lisa',
+                  artwork: [
+                      { src: `https://img.youtube.com/vi/${currentSong.id}/mqdefault.jpg`, sizes: '320x180', type: 'image/jpeg' },
+                      { src: `https://img.youtube.com/vi/${currentSong.id}/hqdefault.jpg`, sizes: '480x360', type: 'image/jpeg' },
+                  ]
+              });
+              
+              navigator.mediaSession.setActionHandler('play', handlePlayPause);
+              navigator.mediaSession.setActionHandler('pause', handlePlayPause);
+              navigator.mediaSession.setActionHandler('nexttrack', handleNextTrack);
+              navigator.mediaSession.setActionHandler('previoustrack', handlePrevTrack);
+          } else {
+              navigator.mediaSession.metadata = null;
+              navigator.mediaSession.setActionHandler('play', null);
+              navigator.mediaSession.setActionHandler('pause', null);
+              navigator.mediaSession.setActionHandler('nexttrack', null);
+              navigator.mediaSession.setActionHandler('previoustrack', null);
+          }
+      }
+  }, [currentSong, activePlaylistForMetadata, handlePlayPause, handleNextTrack, handlePrevTrack]);
+
+  useEffect(() => {
+       if ('mediaSession' in navigator) {
+          navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
+       }
+       if (navigator.serviceWorker.controller) {
+           navigator.serviceWorker.controller.postMessage({
+               type: 'PLAYBACK_STATE_UPDATE',
+               state: isPlaying ? 'playing' : 'paused'
+           });
+       }
+  }, [isPlaying]);
+
+
   const renderView = () => {
     switch (view) {
       case 'main-menu':
         return (
-          <Screen header="FLEX">
+          <Screen header="Lisa">
             <ul className="p-1 space-y-1">{menuItems.map((item, i) => <li key={item} onClick={() => handleMainMenuSelection(i)} className={`px-3 py-2 font-semibold transition-colors cursor-pointer rounded-md ${selectedIndex === i ? 'bg-blue-600 text-white' : 'hover:bg-zinc-100 dark:hover:bg-zinc-800'}`}>{item}</li>)}</ul>
           </Screen>
         );
@@ -771,6 +855,24 @@ const App: React.FC = () => {
                 </div>
             </Screen>
         );
+      case 'edit-song-title':
+        return (
+            <Screen header="Edit Song Title">
+                <div className="p-4 space-y-4">
+                    <label htmlFor="song-title-input" className="text-sm text-gray-700 dark:text-gray-300">Enter a title for the song.</label>
+                    <input 
+                      id="song-title-input"
+                      type="text" 
+                      value={tempSongTitle} 
+                      onChange={e => setTempSongTitle(e.target.value)} 
+                      className="w-full p-2 border rounded-md bg-white dark:bg-zinc-700 dark:text-white dark:border-zinc-600 text-black focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-colors" 
+                      placeholder="Song Title" 
+                      autoFocus 
+                    />
+                    <p className="text-xs text-center text-gray-500">Press the center button to confirm.</p>
+                </div>
+            </Screen>
+        );
       case 'select-playlist-for-song':
         return (
             <Screen header="Add to...">
@@ -858,7 +960,7 @@ const App: React.FC = () => {
                 </div>
             </Screen>
         );
-      default: return <Screen header="FLEX">Loading...</Screen>;
+      default: return <Screen header="Lisa">Loading...</Screen>;
     }
   };
 
