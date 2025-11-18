@@ -20,8 +20,7 @@ export type View =
   | 'song-menu'
   | 'delete-song-confirm'
   | 'delete-playlist-confirm'
-  | 'shuffle-confirm'
-  | 'edit-song-title';
+  | 'shuffle-confirm';
 
 export type PlaybackMode = 'audio' | 'video';
 

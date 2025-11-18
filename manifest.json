@@ -1,7 +1,7 @@
 {
-  "short_name": "Lisa",
-  "name": "Lisa",
-  "description": "A retro-inspired YouTube music player.",
+  "short_name": "RetroPod",
+  "name": "Retro YouTube iPod",
+  "description": "Create and manage YouTube video playlists with an interface inspired by the classic Apple iPod.",
   "icons": [
     {
       "src": "icon.svg",

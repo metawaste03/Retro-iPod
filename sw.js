@@ -42,14 +42,6 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
-  const requestUrl = new URL(event.request.url);
-
-  // Do not cache API requests
-  if (requestUrl.pathname.startsWith('/api/')) {
-    event.respondWith(fetch(event.request));
-    return;
-  }
-
   event.respondWith(
     caches.match(event.request)
       .then((response) => {
@@ -62,10 +54,9 @@ self.addEventListener('fetch', (event) => {
 
         return fetch(fetchRequest).then(
           (response) => {
-            const excludedHosts = ['googlevideo.com'];
-
-            // Don't cache invalid responses, or video/audio streams
-            if (!response || response.status !== 200 || (response.type !== 'basic' && response.type !== 'cors') || excludedHosts.some(host => requestUrl.hostname.includes(host))) {
+            // Don't cache invalid responses or youtube video streams
+            const requestUrl = new URL(event.request.url);
+            if (!response || response.status !== 200 || (response.type !== 'basic' && response.type !== 'cors') || requestUrl.hostname.includes('googlevideo.com')) {
               return response;
             }
 
@@ -81,34 +72,4 @@ self.addEventListener('fetch', (event) => {
         );
       })
   );
-});
-
-// --- Media Control Communication ---
-
-const broadcastActionToClients = async (action) => {
-  const clients = await self.clients.matchAll({
-    type: 'window',
-    includeUncontrolled: true,
-  });
-  clients.forEach((client) => {
-    client.postMessage({ type: 'MEDIA_CONTROL', action });
-  });
-};
-
-// The service worker doesn't directly receive Media Session API events, as those are handled
-// by the main app window. However, this demonstrates how the service worker *would* control
-// playback if it received an external event, for example, from a custom notification.
-self.addEventListener('notificationclick', (event) => {
-  // For a custom notification with actions: actions: [{ action: 'play', title: 'Play' }, ...]
-  const validActions = ['play', 'pause', 'nexttrack', 'previoustrack'];
-  if (validActions.includes(event.action)) {
-    broadcastActionToClients(event.action);
-  }
-});
-
-// Listens for playback state updates from the app to stay in sync.
-self.addEventListener('message', event => {
-    if (event.data && event.data.type === 'PLAYBACK_STATE_UPDATE') {
-        // The service worker could potentially use this state for other background tasks.
-    }
 });

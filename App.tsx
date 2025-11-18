@@ -130,6 +130,7 @@ const getInitialPlaylists = (): Playlist[] => {
 };
 const initialPlaylists = getInitialPlaylists();
 
+
 const App: React.FC = () => {
   const [playlists, setPlaylists] = useState<Playlist[]>(initialPlaylists);
   const [view, setView] = useState<View>(initialPlaylists.length > 0 && initialPlaylists.some(p => p.songs.length > 0) ? 'main-menu' : 'add-song');
@@ -142,7 +143,6 @@ const App: React.FC = () => {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [urlInput, setUrlInput] = useState('');
   const [tempSong, setTempSong] = useState<Song | null>(null);
-  const [tempSongTitle, setTempSongTitle] = useState('');
   const [newPlaylistName, setNewPlaylistName] = useState('');
   const [draggedItemIndex, setDraggedItemIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
@@ -156,7 +156,6 @@ const App: React.FC = () => {
   });
 
   const ytPlayer = useRef<any>(null);
-  const audioRef = useRef<HTMLAudioElement>(null);
   const isPlayerReady = useRef(false);
   
   useEffect(() => {
@@ -203,40 +202,6 @@ const App: React.FC = () => {
     });
   }, []);
 
-  const handleSongEnd = useCallback(() => {
-    if (!nowPlaying) return;
-    const playlist = playlists.find(p => p.id === nowPlaying.playlistId);
-    if (!playlist || playlist.songs.length === 0) {
-        setIsPlaying(false);
-        return;
-    }
-
-    if (repeatMode === 'one') {
-      if (playbackMode === 'audio' && audioRef.current) {
-        audioRef.current.currentTime = 0;
-        audioRef.current.play();
-      } else if (playbackMode === 'video' && ytPlayer.current) {
-        ytPlayer.current.seekTo(0);
-        ytPlayer.current.playVideo();
-      }
-      return;
-    }
-
-    const nextIndex = nowPlaying.songIndex + 1;
-
-    if (repeatMode === 'all') {
-        setNowPlaying({ ...nowPlaying, songIndex: nextIndex % playlist.songs.length });
-        return;
-    }
-
-    // Default 'off' behavior
-    if (nextIndex < playlist.songs.length) {
-        setNowPlaying({ ...nowPlaying, songIndex: nextIndex });
-    } else {
-        setIsPlaying(false); // Stop at the end
-    }
-  }, [nowPlaying, playlists, repeatMode, playbackMode]);
-
   const handleNextTrack = useCallback(() => {
     if (!nowPlaying) return;
     triggerVibration();
@@ -255,16 +220,10 @@ const App: React.FC = () => {
     if (!nowPlaying) return;
     triggerVibration();
     
-    const playerTime = playbackMode === 'audio'
-        ? audioRef.current?.currentTime || 0
-        : ytPlayer.current?.getCurrentTime ? ytPlayer.current.getCurrentTime() : 0;
+    const playerTime = ytPlayer.current?.getCurrentTime ? ytPlayer.current.getCurrentTime() : 0;
 
     if (playerTime > 3) {
-      if (playbackMode === 'audio' && audioRef.current) {
-        audioRef.current.currentTime = 0;
-      } else {
-        ytPlayer.current?.seekTo(0);
-      }
+      ytPlayer.current?.seekTo(0);
     } else if (nowPlaying.songIndex > 0) {
       setNowPlaying({ ...nowPlaying, songIndex: nowPlaying.songIndex - 1 });
     } else {
@@ -272,25 +231,52 @@ const App: React.FC = () => {
       if (repeatMode === 'all' && playlist && playlist.songs.length > 0) {
         setNowPlaying({ ...nowPlaying, songIndex: playlist.songs.length - 1});
       } else {
-        if (playbackMode === 'audio' && audioRef.current) {
-            audioRef.current.currentTime = 0;
-        } else {
-            ytPlayer.current?.seekTo(0);
-        }
+        ytPlayer.current?.seekTo(0);
       }
     }
-  }, [nowPlaying, playlists, repeatMode, playbackMode]);
+  }, [nowPlaying, playlists, repeatMode]);
+  
+  const handleSongEnd = useCallback(() => {
+    if (!nowPlaying) return;
+    const playlist = playlists.find(p => p.id === nowPlaying.playlistId);
+    if (!playlist || playlist.songs.length === 0) {
+        setIsPlaying(false);
+        return;
+    }
+
+    if (repeatMode === 'one') {
+        ytPlayer.current?.seekTo(0);
+        ytPlayer.current?.playVideo();
+        return;
+    }
+
+    const nextIndex = nowPlaying.songIndex + 1;
+
+    if (repeatMode === 'all') {
+        setNowPlaying({ ...nowPlaying, songIndex: nextIndex % playlist.songs.length });
+        return;
+    }
+
+    // Default 'off' behavior
+    if (nextIndex < playlist.songs.length) {
+        setNowPlaying({ ...nowPlaying, songIndex: nextIndex });
+    } else {
+        setIsPlaying(false); // Stop at the end
+    }
+  }, [nowPlaying, playlists, repeatMode]);
 
   useEffect(() => {
-    const setupVideoPlayer = () => {
+    const setupPlayer = () => {
       if (!currentSong || !document.getElementById('youtube-player')) return;
-
+      
       const onPlayerStateChange = (event: any) => {
         if (event.data === window.YT.PlayerState.ENDED) {
           handleSongEnd();
-        } else if (event.data === window.YT.PlayerState.PLAYING) {
+        }
+        if (event.data === window.YT.PlayerState.PLAYING) {
           setIsPlaying(true);
-        } else if ([window.YT.PlayerState.PAUSED, window.YT.PlayerState.CUED].includes(event.data)) {
+        }
+        if (event.data === window.YT.PlayerState.PAUSED) {
           setIsPlaying(false);
         }
       };
@@ -310,64 +296,21 @@ const App: React.FC = () => {
         });
       }
     };
-    
-    const setupAudioPlayer = async () => {
-      if (!currentSong || !audioRef.current) return;
-      
-      try {
-        const response = await fetch(`/api/get-audio-stream?videoId=${currentSong.id}`);
-        
-        if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(errorData.error || `Server responded with status ${response.status}`);
-        }
-
-        const data = await response.json();
-        
-        if (data.audioUrl && audioRef.current) {
-            audioRef.current.src = data.audioUrl;
-            audioRef.current.play().catch(e => {
-                console.error("Audio play failed:", e);
-                alert("Could not play audio. The browser might have blocked autoplay.");
-            });
-        } else {
-            throw new Error("No audio URL found in the API response.");
-        }
-      } catch (error) {
-          console.error("Failed to get audio stream:", error);
-          alert("Could not play audio for this song. It may be restricted or unavailable.");
-          handleSongEnd(); // Move to next or stop
-      }
-    };
 
     if (view === 'now-playing') {
-      if (playbackMode === 'audio') {
-        if (ytPlayer.current && typeof ytPlayer.current.stopVideo === 'function') {
-          ytPlayer.current.stopVideo();
-        }
-        setupAudioPlayer();
-      } else { // video mode
-        if (audioRef.current) {
-          audioRef.current.pause();
-          audioRef.current.src = '';
-        }
-        if (!window.YT) {
-          window.onYouTubeIframeAPIReady = setupVideoPlayer;
-        } else {
-          setupVideoPlayer();
-        }
+      if (!window.YT) {
+        window.onYouTubeIframeAPIReady = setupPlayer;
+      } else {
+        setupPlayer();
       }
-    } else {
-      // Stop both players when leaving now-playing view
-      if (ytPlayer.current && typeof ytPlayer.current.stopVideo === 'function') {
-        ytPlayer.current.stopVideo();
-      }
-      if (audioRef.current) {
-        audioRef.current.pause();
-      }
-      setIsPlaying(false);
     }
-  }, [view, currentSong, playbackMode, handleSongEnd]);
+
+    return () => {
+        if (view !== 'now-playing' && ytPlayer.current && typeof ytPlayer.current.stopVideo === 'function') {
+            ytPlayer.current.stopVideo();
+        }
+    }
+  }, [view, currentSong, handleSongEnd]);
 
 
   const handleNext = () => {
@@ -377,7 +320,7 @@ const App: React.FC = () => {
       case 'main-menu': navigate(menuItems, 'next'); break;
       case 'playlists': navigate(playlistMenuItems, 'next'); break;
       case 'playlist-view': navigate(playlistViewItems, 'next'); break;
-      case 'select-playlist-for-song': navigate([...playlists, {id: 'new', name: 'Create New Playlist', songs:[]}],'next'); break;
+      case 'select-playlist-for-song': navigate([...playlists, {id: 'new', name: 'Create New Playlist', songs:[]}], 'next'); break;
       case 'song-menu': navigate(['Play'], 'next'); break;
       case 'delete-song-confirm':
       case 'delete-playlist-confirm':
@@ -394,7 +337,7 @@ const App: React.FC = () => {
       case 'main-menu': navigate(menuItems, 'prev'); break;
       case 'playlists': navigate(playlistMenuItems, 'prev'); break;
       case 'playlist-view': navigate(playlistViewItems, 'prev'); break;
-      case 'select-playlist-for-song': navigate([...playlists, {id: 'new', name: 'Create New Playlist', songs:[]}],'prev'); break;
+      case 'select-playlist-for-song': navigate([...playlists, {id: 'new', name: 'Create New Playlist', songs:[]}], 'prev'); break;
       case 'song-menu': navigate(['Play'], 'prev'); break;
       case 'delete-song-confirm':
       case 'delete-playlist-confirm':
@@ -413,7 +356,6 @@ const App: React.FC = () => {
       case 'playlist-view': setView('playlists'); setActivePlaylistId(null); break;
       case 'add-song': if (playlists.length > 0) setView('main-menu'); setUrlInput(''); break;
       case 'now-playing': setView(activePlaylistId ? 'playlist-view' : 'main-menu'); break;
-      case 'edit-song-title': setView('add-song'); setTempSong(null); setTempSongTitle(''); break;
       case 'select-playlist-for-song': setView('add-song'); setTempSong(null); break;
       case 'create-playlist-input':
         setView(tempSong ? 'select-playlist-for-song' : 'playlists');
@@ -433,13 +375,7 @@ const App: React.FC = () => {
 
   const handlePlayPause = useCallback(() => {
       triggerVibration();
-      if (playbackMode === 'audio' && audioRef.current) {
-        if (audioRef.current.paused) {
-            audioRef.current.play().catch(e => console.error("Audio play failed", e));
-        } else {
-            audioRef.current.pause();
-        }
-      } else if (playbackMode === 'video' && ytPlayer.current && isPlayerReady.current) {
+      if (ytPlayer.current && isPlayerReady.current) {
         const playerState = ytPlayer.current.getPlayerState();
         if (playerState === window.YT.PlayerState.PLAYING) {
           ytPlayer.current.pauseVideo();
@@ -447,13 +383,12 @@ const App: React.FC = () => {
           ytPlayer.current.playVideo();
         }
       } else if (currentSong) {
-        // Fallback for initial play
         setIsPlaying(!isPlaying);
       } else if (playlists.length > 0 && playlists[0].songs.length > 0) {
         setNowPlaying({ playlistId: playlists[0].id, songIndex: 0 });
         setView('now-playing');
       }
-  }, [currentSong, isPlaying, playlists, playbackMode]);
+  }, [currentSong, isPlaying, playlists]);
 
   const handleCenterClick = () => {
     triggerVibration();
@@ -466,7 +401,6 @@ const App: React.FC = () => {
       case 'delete-playlist-confirm': handleConfirmation(selectedIndex); break;
       case 'shuffle-confirm': handleConfirmation(selectedIndex); break;
       case 'add-song': handleAddSongUrl(); break;
-      case 'edit-song-title': handleConfirmSongTitle(); break;
       case 'select-playlist-for-song': handleSelectPlaylistForSongSelection(selectedIndex); break;
       case 'create-playlist-input': handleCreatePlaylist(); break;
       case 'now-playing': handleNowPlayingSelection(selectedIndex); break;
@@ -589,10 +523,9 @@ const App: React.FC = () => {
     const videoId = getYouTubeId(urlInput);
     if (videoId) {
       triggerVibration(100);
-      const newSong: Song = { id: videoId, title: '' }; // Title will be set in the next step
+      const newSong: Song = { id: videoId, title: `Song: ${videoId}` };
       setTempSong(newSong);
-      setTempSongTitle(`Song: ${videoId}`); // Pre-populate with a default
-      setView('edit-song-title');
+      setView('select-playlist-for-song');
       setUrlInput('');
       setSelectedIndex(0);
     } else {
@@ -600,21 +533,11 @@ const App: React.FC = () => {
       alert('Invalid YouTube URL');
     }
   };
-
-  const handleConfirmSongTitle = () => {
-    if (tempSong && tempSongTitle.trim()) {
-      const updatedSong: Song = { ...tempSong, title: tempSongTitle.trim() };
-      setTempSong(updatedSong);
-      setView('select-playlist-for-song');
-      setSelectedIndex(0);
-    }
-  };
   
   const addSongToPlaylist = (playlistId: string, song: Song) => {
     triggerVibration(100);
     setPlaylists(prev => prev.map(p => p.id === playlistId ? { ...p, songs: [...p.songs, song] } : p));
     setTempSong(null);
-    setTempSongTitle('');
     setActivePlaylistId(playlistId);
     setView('playlist-view');
     setSelectedIndex(playlists.find(p => p.id === playlistId)?.songs.length || 0);
@@ -636,7 +559,6 @@ const App: React.FC = () => {
         
         setNewPlaylistName('');
         setTempSong(null);
-        setTempSongTitle('');
 
         if (tempSong) {
             setActivePlaylistId(newPlaylist.id);
@@ -728,77 +650,11 @@ const App: React.FC = () => {
     setDragOverIndex(null);
   };
 
-  // --- Service Worker and Media Session Integration ---
-
-  useEffect(() => {
-    const handleSWMessage = (event: MessageEvent) => {
-        if (event.data && event.data.type === 'MEDIA_CONTROL') {
-            switch (event.data.action) {
-                case 'play':
-                case 'pause':
-                    handlePlayPause();
-                    break;
-                case 'nexttrack':
-                    handleNextTrack();
-                    break;
-                case 'previoustrack':
-                    handlePrevTrack();
-                    break;
-            }
-        }
-    };
-    navigator.serviceWorker.addEventListener('message', handleSWMessage);
-    return () => {
-        navigator.serviceWorker.removeEventListener('message', handleSWMessage);
-    };
-  }, [handlePlayPause, handleNextTrack, handlePrevTrack]);
-
-  const activePlaylistForMetadata = playlists.find(p => p.id === nowPlaying?.playlistId);
-  useEffect(() => {
-      if ('mediaSession' in navigator) {
-          if (currentSong && activePlaylistForMetadata) {
-              navigator.mediaSession.metadata = new MediaMetadata({
-                  title: currentSong.title,
-                  artist: activePlaylistForMetadata.name,
-                  album: 'Lisa',
-                  artwork: [
-                      { src: `https://img.youtube.com/vi/${currentSong.id}/mqdefault.jpg`, sizes: '320x180', type: 'image/jpeg' },
-                      { src: `https://img.youtube.com/vi/${currentSong.id}/hqdefault.jpg`, sizes: '480x360', type: 'image/jpeg' },
-                  ]
-              });
-              
-              navigator.mediaSession.setActionHandler('play', handlePlayPause);
-              navigator.mediaSession.setActionHandler('pause', handlePlayPause);
-              navigator.mediaSession.setActionHandler('nexttrack', handleNextTrack);
-              navigator.mediaSession.setActionHandler('previoustrack', handlePrevTrack);
-          } else {
-              navigator.mediaSession.metadata = null;
-              navigator.mediaSession.setActionHandler('play', null);
-              navigator.mediaSession.setActionHandler('pause', null);
-              navigator.mediaSession.setActionHandler('nexttrack', null);
-              navigator.mediaSession.setActionHandler('previoustrack', null);
-          }
-      }
-  }, [currentSong, activePlaylistForMetadata, handlePlayPause, handleNextTrack, handlePrevTrack]);
-
-  useEffect(() => {
-       if ('mediaSession' in navigator) {
-          navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
-       }
-       if (navigator.serviceWorker.controller) {
-           navigator.serviceWorker.controller.postMessage({
-               type: 'PLAYBACK_STATE_UPDATE',
-               state: isPlaying ? 'playing' : 'paused'
-           });
-       }
-  }, [isPlaying]);
-
-
   const renderView = () => {
     switch (view) {
       case 'main-menu':
         return (
-          <Screen header="Lisa">
+          <Screen header="FLEX">
             <ul className="p-1 space-y-1">{menuItems.map((item, i) => <li key={item} onClick={() => handleMainMenuSelection(i)} className={`px-3 py-2 font-semibold transition-colors cursor-pointer rounded-md ${selectedIndex === i ? 'bg-blue-600 text-white' : 'hover:bg-zinc-100 dark:hover:bg-zinc-800'}`}>{item}</li>)}</ul>
           </Screen>
         );
@@ -915,24 +771,6 @@ const App: React.FC = () => {
                 </div>
             </Screen>
         );
-      case 'edit-song-title':
-        return (
-            <Screen header="Edit Song Title">
-                <div className="p-4 space-y-4">
-                    <label htmlFor="song-title-input" className="text-sm text-gray-700 dark:text-gray-300">Enter a title for the song.</label>
-                    <input 
-                      id="song-title-input"
-                      type="text" 
-                      value={tempSongTitle} 
-                      onChange={e => setTempSongTitle(e.target.value)} 
-                      className="w-full p-2 border rounded-md bg-white dark:bg-zinc-700 dark:text-white dark:border-zinc-600 text-black focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-colors" 
-                      placeholder="Song Title" 
-                      autoFocus 
-                    />
-                    <p className="text-xs text-center text-gray-500">Press the center button to confirm.</p>
-                </div>
-            </Screen>
-        );
       case 'select-playlist-for-song':
         return (
             <Screen header="Add to...">
@@ -1020,13 +858,12 @@ const App: React.FC = () => {
                 </div>
             </Screen>
         );
-      default: return <Screen header="Lisa">Loading...</Screen>;
+      default: return <Screen header="FLEX">Loading...</Screen>;
     }
   };
 
   return (
     <div className={`bg-black min-h-screen w-full flex justify-center items-center p-4 ${theme}`}>
-      <audio ref={audioRef} onEnded={handleSongEnd} onPlay={() => setIsPlaying(true)} onPause={() => setIsPlaying(false)} crossOrigin="anonymous" />
       <div className="relative w-full max-w-sm h-[85vh] max-h-[700px] bg-zinc-200 dark:bg-zinc-900 rounded-3xl shadow-2xl flex flex-col p-2.5 border border-zinc-400 dark:border-zinc-700">
         {renderView()}
         <ClickWheel
