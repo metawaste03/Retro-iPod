@@ -55,7 +55,12 @@ self.addEventListener('fetch', (event) => {
         return fetch(fetchRequest).then(
           (response) => {
             const requestUrl = new URL(event.request.url);
-            const excludedHosts = ['googlevideo.com', 'pipedapi.kavin.rocks'];
+            const excludedHosts = [
+                'googlevideo.com', 
+                'pipedapi.kavin.rocks', 
+                'pipedapi.tokhmi.xyz', 
+                'piped-api.lunar.computer'
+            ];
 
             // Don't cache invalid responses, or video/audio streams
             if (!response || response.status !== 200 || (response.type !== 'basic' && response.type !== 'cors') || excludedHosts.some(host => requestUrl.hostname.includes(host))) {

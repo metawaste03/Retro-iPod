@@ -130,6 +130,12 @@ const getInitialPlaylists = (): Playlist[] => {
 };
 const initialPlaylists = getInitialPlaylists();
 
+const PIPED_INSTANCES = [
+  'https://pipedapi.tokhmi.xyz',
+  'https://piped-api.lunar.computer',
+  'https://pipedapi.kavin.rocks', // Original as a fallback
+];
+
 
 const App: React.FC = () => {
   const [playlists, setPlaylists] = useState<Playlist[]>(initialPlaylists);
@@ -313,28 +319,42 @@ const App: React.FC = () => {
     };
     
     const setupAudioPlayer = async () => {
-        if (!currentSong || !audioRef.current) return;
-        try {
-            const response = await fetch(`https://pipedapi.kavin.rocks/streams/${currentSong.id}`);
-            if (!response.ok) throw new Error('Failed to fetch audio stream');
-            const data = await response.json();
-            const audioStream = data.audioStreams
-                .filter((s: any) => s.mimeType === "audio/mp4")
-                .sort((a: any, b: any) => b.bitrate - a.bitrate)[0];
+      if (!currentSong || !audioRef.current) return;
+      
+      let streamUrl: string | null = null;
 
-            if (audioStream && audioRef.current) {
-                audioRef.current.src = audioStream.url;
-                audioRef.current.play().catch(e => console.error("Audio play failed:", e));
-            } else {
-                console.error("No suitable audio stream found");
-                alert("Could not play audio for this song. It may be restricted.");
-                handleSongEnd();
-            }
-        } catch (error) {
-            console.error("Error fetching audio stream:", error);
-            alert("Could not play audio for this song. It may be restricted.");
-            handleSongEnd();
-        }
+      for (const instance of PIPED_INSTANCES) {
+          try {
+              const response = await fetch(`${instance}/streams/${currentSong.id}`);
+              if (!response.ok) {
+                  console.warn(`Piped instance ${instance} failed with status ${response.status}. Trying next.`);
+                  continue;
+              }
+              const data = await response.json();
+              const audioStream = data.audioStreams
+                  .filter((s: any) => s.mimeType === "audio/mp4")
+                  .sort((a: any, b: any) => b.bitrate - a.bitrate)[0];
+
+              if (audioStream && audioStream.url) {
+                  streamUrl = audioStream.url;
+                  console.log(`Successfully fetched audio stream from ${instance}`);
+                  break; // Success, exit loop
+              }
+          } catch (error) {
+              console.warn(`Error fetching from Piped instance ${instance}:`, error);
+          }
+      }
+
+      if (streamUrl && audioRef.current) {
+          audioRef.current.src = streamUrl;
+          audioRef.current.play().catch(e => {
+              console.error("Audio play failed:", e);
+          });
+      } else {
+          console.error("Could not find a working audio stream from any Piped instance.");
+          alert("Could not play audio for this song. It may be restricted or the streaming services might be temporarily unavailable.");
+          handleSongEnd();
+      }
     };
 
     if (view === 'now-playing') {
