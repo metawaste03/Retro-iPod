@@ -1,0 +1,5 @@
+{
+  "name": "Retro YouTube iPod",
+  "description": "Create and manage YouTube video playlists with an interface inspired by the classic Apple iPod. Add songs from YouTube URLs, reorder them with drag-and-drop, and choose between audio or video playback modes.",
+  "requestFramePermissions": []
+}
