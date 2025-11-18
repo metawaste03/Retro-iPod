@@ -54,9 +54,11 @@ self.addEventListener('fetch', (event) => {
 
         return fetch(fetchRequest).then(
           (response) => {
-            // Don't cache invalid responses or youtube video streams
             const requestUrl = new URL(event.request.url);
-            if (!response || response.status !== 200 || (response.type !== 'basic' && response.type !== 'cors') || requestUrl.hostname.includes('googlevideo.com')) {
+            const excludedHosts = ['googlevideo.com', 'pipedapi.kavin.rocks'];
+
+            // Don't cache invalid responses, or video/audio streams
+            if (!response || response.status !== 200 || (response.type !== 'basic' && response.type !== 'cors') || excludedHosts.some(host => requestUrl.hostname.includes(host))) {
               return response;
             }
 

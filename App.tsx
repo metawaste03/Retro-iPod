@@ -3,9 +3,6 @@ import type { View, Playlist, Song, PlaybackMode, RepeatMode } from './types';
 import { getYouTubeId } from './services/youtubeService';
 import { PlayIcon, PauseIcon, NextTrackIcon, PrevTrackIcon, ChevronRightIcon, RepeatIcon, RepeatOneIcon, MoonIcon, SunIcon } from './components/icons';
 
-// FIX: Removed conflicting global declarations for MediaMetadataInit and MediaMetadata.
-// These types are provided by default in modern TypeScript DOM libraries, and the
-// manual declarations were causing duplicate identifier and type mismatch errors.
 // --- Type definition for YouTube Player API ---
 declare global {
   interface Window {
@@ -160,6 +157,7 @@ const App: React.FC = () => {
   });
 
   const ytPlayer = useRef<any>(null);
+  const audioRef = useRef<HTMLAudioElement>(null);
   const isPlayerReady = useRef(false);
   
   useEffect(() => {
@@ -206,6 +204,40 @@ const App: React.FC = () => {
     });
   }, []);
 
+  const handleSongEnd = useCallback(() => {
+    if (!nowPlaying) return;
+    const playlist = playlists.find(p => p.id === nowPlaying.playlistId);
+    if (!playlist || playlist.songs.length === 0) {
+        setIsPlaying(false);
+        return;
+    }
+
+    if (repeatMode === 'one') {
+      if (playbackMode === 'audio' && audioRef.current) {
+        audioRef.current.currentTime = 0;
+        audioRef.current.play();
+      } else if (playbackMode === 'video' && ytPlayer.current) {
+        ytPlayer.current.seekTo(0);
+        ytPlayer.current.playVideo();
+      }
+      return;
+    }
+
+    const nextIndex = nowPlaying.songIndex + 1;
+
+    if (repeatMode === 'all') {
+        setNowPlaying({ ...nowPlaying, songIndex: nextIndex % playlist.songs.length });
+        return;
+    }
+
+    // Default 'off' behavior
+    if (nextIndex < playlist.songs.length) {
+        setNowPlaying({ ...nowPlaying, songIndex: nextIndex });
+    } else {
+        setIsPlaying(false); // Stop at the end
+    }
+  }, [nowPlaying, playlists, repeatMode, playbackMode]);
+
   const handleNextTrack = useCallback(() => {
     if (!nowPlaying) return;
     triggerVibration();
@@ -224,10 +256,16 @@ const App: React.FC = () => {
     if (!nowPlaying) return;
     triggerVibration();
     
-    const playerTime = ytPlayer.current?.getCurrentTime ? ytPlayer.current.getCurrentTime() : 0;
+    const playerTime = playbackMode === 'audio'
+        ? audioRef.current?.currentTime || 0
+        : ytPlayer.current?.getCurrentTime ? ytPlayer.current.getCurrentTime() : 0;
 
     if (playerTime > 3) {
-      ytPlayer.current?.seekTo(0);
+      if (playbackMode === 'audio' && audioRef.current) {
+        audioRef.current.currentTime = 0;
+      } else {
+        ytPlayer.current?.seekTo(0);
+      }
     } else if (nowPlaying.songIndex > 0) {
       setNowPlaying({ ...nowPlaying, songIndex: nowPlaying.songIndex - 1 });
     } else {
@@ -235,52 +273,25 @@ const App: React.FC = () => {
       if (repeatMode === 'all' && playlist && playlist.songs.length > 0) {
         setNowPlaying({ ...nowPlaying, songIndex: playlist.songs.length - 1});
       } else {
-        ytPlayer.current?.seekTo(0);
+        if (playbackMode === 'audio' && audioRef.current) {
+            audioRef.current.currentTime = 0;
+        } else {
+            ytPlayer.current?.seekTo(0);
+        }
       }
     }
-  }, [nowPlaying, playlists, repeatMode]);
-  
-  const handleSongEnd = useCallback(() => {
-    if (!nowPlaying) return;
-    const playlist = playlists.find(p => p.id === nowPlaying.playlistId);
-    if (!playlist || playlist.songs.length === 0) {
-        setIsPlaying(false);
-        return;
-    }
-
-    if (repeatMode === 'one') {
-        ytPlayer.current?.seekTo(0);
-        ytPlayer.current?.playVideo();
-        return;
-    }
-
-    const nextIndex = nowPlaying.songIndex + 1;
-
-    if (repeatMode === 'all') {
-        setNowPlaying({ ...nowPlaying, songIndex: nextIndex % playlist.songs.length });
-        return;
-    }
-
-    // Default 'off' behavior
-    if (nextIndex < playlist.songs.length) {
-        setNowPlaying({ ...nowPlaying, songIndex: nextIndex });
-    } else {
-        setIsPlaying(false); // Stop at the end
-    }
-  }, [nowPlaying, playlists, repeatMode]);
+  }, [nowPlaying, playlists, repeatMode, playbackMode]);
 
   useEffect(() => {
-    const setupPlayer = () => {
+    const setupVideoPlayer = () => {
       if (!currentSong || !document.getElementById('youtube-player')) return;
-      
+
       const onPlayerStateChange = (event: any) => {
         if (event.data === window.YT.PlayerState.ENDED) {
           handleSongEnd();
-        }
-        if (event.data === window.YT.PlayerState.PLAYING) {
+        } else if (event.data === window.YT.PlayerState.PLAYING) {
           setIsPlaying(true);
-        }
-        if (event.data === window.YT.PlayerState.PAUSED) {
+        } else if ([window.YT.PlayerState.PAUSED, window.YT.PlayerState.CUED].includes(event.data)) {
           setIsPlaying(false);
         }
       };
@@ -300,21 +311,60 @@ const App: React.FC = () => {
         });
       }
     };
+    
+    const setupAudioPlayer = async () => {
+        if (!currentSong || !audioRef.current) return;
+        try {
+            const response = await fetch(`https://pipedapi.kavin.rocks/streams/${currentSong.id}`);
+            if (!response.ok) throw new Error('Failed to fetch audio stream');
+            const data = await response.json();
+            const audioStream = data.audioStreams
+                .filter((s: any) => s.mimeType === "audio/mp4")
+                .sort((a: any, b: any) => b.bitrate - a.bitrate)[0];
+
+            if (audioStream && audioRef.current) {
+                audioRef.current.src = audioStream.url;
+                audioRef.current.play().catch(e => console.error("Audio play failed:", e));
+            } else {
+                console.error("No suitable audio stream found");
+                alert("Could not play audio for this song. It may be restricted.");
+                handleSongEnd();
+            }
+        } catch (error) {
+            console.error("Error fetching audio stream:", error);
+            alert("Could not play audio for this song. It may be restricted.");
+            handleSongEnd();
+        }
+    };
 
     if (view === 'now-playing') {
-      if (!window.YT) {
-        window.onYouTubeIframeAPIReady = setupPlayer;
-      } else {
-        setupPlayer();
-      }
-    }
-
-    return () => {
-        if (view !== 'now-playing' && ytPlayer.current && typeof ytPlayer.current.stopVideo === 'function') {
-            ytPlayer.current.stopVideo();
+      if (playbackMode === 'audio') {
+        if (ytPlayer.current && typeof ytPlayer.current.stopVideo === 'function') {
+          ytPlayer.current.stopVideo();
         }
+        setupAudioPlayer();
+      } else { // video mode
+        if (audioRef.current) {
+          audioRef.current.pause();
+          audioRef.current.src = '';
+        }
+        if (!window.YT) {
+          window.onYouTubeIframeAPIReady = setupVideoPlayer;
+        } else {
+          setupVideoPlayer();
+        }
+      }
+    } else {
+      // Stop both players when leaving now-playing view
+      if (ytPlayer.current && typeof ytPlayer.current.stopVideo === 'function') {
+        ytPlayer.current.stopVideo();
+      }
+      if (audioRef.current) {
+        audioRef.current.pause();
+      }
+      setIsPlaying(false);
     }
-  }, [view, currentSong, handleSongEnd]);
+  }, [view, currentSong, playbackMode, handleSongEnd]);
 
 
   const handleNext = () => {
@@ -380,7 +430,13 @@ const App: React.FC = () => {
 
   const handlePlayPause = useCallback(() => {
       triggerVibration();
-      if (ytPlayer.current && isPlayerReady.current) {
+      if (playbackMode === 'audio' && audioRef.current) {
+        if (audioRef.current.paused) {
+            audioRef.current.play().catch(e => console.error("Audio play failed", e));
+        } else {
+            audioRef.current.pause();
+        }
+      } else if (playbackMode === 'video' && ytPlayer.current && isPlayerReady.current) {
         const playerState = ytPlayer.current.getPlayerState();
         if (playerState === window.YT.PlayerState.PLAYING) {
           ytPlayer.current.pauseVideo();
@@ -388,12 +444,13 @@ const App: React.FC = () => {
           ytPlayer.current.playVideo();
         }
       } else if (currentSong) {
+        // Fallback for initial play
         setIsPlaying(!isPlaying);
       } else if (playlists.length > 0 && playlists[0].songs.length > 0) {
         setNowPlaying({ playlistId: playlists[0].id, songIndex: 0 });
         setView('now-playing');
       }
-  }, [currentSong, isPlaying, playlists]);
+  }, [currentSong, isPlaying, playlists, playbackMode]);
 
   const handleCenterClick = () => {
     triggerVibration();
@@ -966,6 +1023,7 @@ const App: React.FC = () => {
 
   return (
     <div className={`bg-black min-h-screen w-full flex justify-center items-center p-4 ${theme}`}>
+      <audio ref={audioRef} onEnded={handleSongEnd} onPlay={() => setIsPlaying(true)} onPause={() => setIsPlaying(false)} crossOrigin="anonymous" />
       <div className="relative w-full max-w-sm h-[85vh] max-h-[700px] bg-zinc-200 dark:bg-zinc-900 rounded-3xl shadow-2xl flex flex-col p-2.5 border border-zinc-400 dark:border-zinc-700">
         {renderView()}
         <ClickWheel
